@@ -107,8 +107,11 @@ ErrorType Lane::GetOrientationByArcLength(const decimal_t arc_length,
   return kSuccess;
 }
 
+// 找投影点
 ErrorType Lane::GetArcLengthByVecPosition(const Vecf<LaneDim>& vec_position,
                                           decimal_t* arc_length) const {
+  // 输出 arc_length 即 s // 0125
+
   if (!IsValid()) {
     return kWrongStatus;
   }
@@ -116,30 +119,30 @@ ErrorType Lane::GetArcLengthByVecPosition(const Vecf<LaneDim>& vec_position,
   static constexpr int kMaxCnt = 4;
   static constexpr decimal_t kMaxDistSquare = 900.0;
 
-  const decimal_t val_lb = position_spline_.begin();
-  const decimal_t val_ub = position_spline_.end();
-  decimal_t step = (val_ub - val_lb) * 0.5;
+  const decimal_t val_lb = position_spline_.begin();  // lower bound
+  const decimal_t val_ub = position_spline_.end();  // upper bound
+  decimal_t step = (val_ub - val_lb) * 0.5;  // 步长 = s / 2
 
-  decimal_t s1 = val_lb;
+  decimal_t s1 = val_lb;  // arc length
   decimal_t s2 = val_lb + step;
   decimal_t s3 = val_ub;
-  decimal_t initial_guess = s2;
+  decimal_t initial_guess = s2;  // 二分
 
   // printf("[XXX]s1 = %lf, s2 = %lf, s3 = %lf\n", s1, s2, s3);
 
   Vecf<LaneDim> start_pos, mid_pos, final_pos;
-  position_spline_.evaluate(s1, &start_pos);
+  position_spline_.evaluate(s1, &start_pos);  // s -> (x, y) =: start_pos
   position_spline_.evaluate(s2, &mid_pos);
   position_spline_.evaluate(s3, &final_pos);
 
   // ~ Step I: use binary search to find a initial guess
-  decimal_t d1 = (start_pos - vec_position).squaredNorm();
+  decimal_t d1 = (start_pos - vec_position).squaredNorm();  // l2 distance
   decimal_t d2 = (mid_pos - vec_position).squaredNorm();
   decimal_t d3 = (final_pos - vec_position).squaredNorm();
 
+  // 规定次数的二分区间压缩
   for (int i = 0; i < kMaxCnt; ++i) {
-    // printf("[XXX] - it = %d - s1 = %lf, s2 = %lf, s3 = %lf\n", i, s1, s2,
-    // s3);
+    // printf("[XXX] - it = %d - s1 = %lf, s2 = %lf, s3 = %lf\n", i, s1, s2, s3);
     decimal_t min_dis = std::min(std::min(d1, d2), d3);
     if (min_dis < kMaxDistSquare) {
       if (min_dis == d1) {
@@ -155,7 +158,7 @@ ErrorType Lane::GetArcLengthByVecPosition(const Vecf<LaneDim>& vec_position,
     }
     step *= 0.5;
     if (min_dis == d1) {
-      initial_guess = s1;
+      initial_guess = s1; // [s1, s2) 区间
       s3 = s2;
       s2 = s1 + step;
       position_spline_.evaluate(s2, &mid_pos);
@@ -181,17 +184,16 @@ ErrorType Lane::GetArcLengthByVecPosition(const Vecf<LaneDim>& vec_position,
     } else {
       printf(
           "[Lane]GetArcLengthByVecPosition - d1: %lf, d2: %lf, d3: %lf, "
-          "min_dis: %lf\n",
-          d1, d2, d3, min_dis);
+          "min_dis: %lf\n", d1, d2, d3, min_dis);
       assert(false);
     }
   }
 
-  // printf("[XXX]initial_guess = %lf\n", initial_guess);
+  // printf("[XXX]initial_guess = %lf\n", initial_guess); // 类型为 s (decimal_t)
 
-  // ~ Step II: use Newton's method to find the local minimum
+  // ~ Step II: use Newton's method to find the local minimum 优化
   GetArcLengthByVecPositionWithInitialGuess(vec_position, initial_guess,
-                                            arc_length);
+                                            arc_length);  // arc_length 是输出
 
   return kSuccess;
 }
@@ -199,33 +201,40 @@ ErrorType Lane::GetArcLengthByVecPosition(const Vecf<LaneDim>& vec_position,
 ErrorType Lane::GetArcLengthByVecPositionWithInitialGuess(
     const Vecf<LaneDim>& vec_position, const decimal_t& initial_guess,
     decimal_t* arc_length) const {
+
+  // 基于牛顿法的局部求解 min d(s, spline), s0 = initial_guess.
+  // 输出 arc_length  // 0125
+
   if (!IsValid()) {
-    return kWrongStatus;
+    return kWrongStatus; // 在什么情况下不 valid
   }
 
-  const decimal_t val_lb = position_spline_.begin();
+  // 找上下界
+  const decimal_t val_lb = position_spline_.begin(); // 竟然不是指针，是 s
   const decimal_t val_ub = position_spline_.end();
 
   // ~ use Newton's method to find the local minimum
   static constexpr decimal_t epsilon = 1e-3;
   static constexpr int kMaxIter = 8;
+  // 确保初值在spline内， 为什么会不满足呢 ？
   decimal_t x = std::min(std::max(initial_guess, val_lb), val_ub);
-  Vecf<LaneDim> p, dp, ddp, tmp_vec;
+  Vecf<LaneDim> p, dp, ddp, tmp_vec;  // 位置、切线、曲率
 
   for (int i = 0; i < kMaxIter; ++i) {
-    position_spline_.evaluate(x, 0, &p);
+    position_spline_.evaluate(x, 0, &p);  // 求不同阶导数
     position_spline_.evaluate(x, 1, &dp);
     position_spline_.evaluate(x, 2, &ddp);
 
-    tmp_vec = p - vec_position;
+    tmp_vec = p - vec_position;  // 从 (x, y) 到 spline(s_t) 的向量
     double f_1 = tmp_vec.dot(dp);
     double f_2 = dp.dot(dp) + tmp_vec.dot(ddp);
-    double dx = -f_1 / f_2;
+    double dx = - f_1 / f_2;
 
     if (std::fabs(dx) < epsilon) {
       break;
     }
 
+    // 边界保护
     if (x + dx > val_ub) {
       x = val_ub;
       // printf(
@@ -313,6 +322,7 @@ ErrorType Lane::GetArcLengthByVecPositionWithInitialGuess(
 //   return kSuccess;
 // }
 
+// 检查 s 是否越界
 ErrorType Lane::CheckInputArcLength(const decimal_t arc_length) const {
   if (!IsValid()) {
     printf("[CheckInputArcLength]Quering invalid lane.\n");

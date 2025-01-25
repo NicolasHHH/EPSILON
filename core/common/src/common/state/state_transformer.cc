@@ -8,7 +8,7 @@ ErrorType StateTransformer::GetStateFromFrenetState(const FrenetState& fs,
     printf("[StateFromFrenetState]Err: lane not valid.\n");
     return kIllegalInput;
   }
-  if (!fs.is_ds_usable) {
+  if (!fs.is_ds_usable) {  // 低速歧义点问题
     // ~ You may come from high speed traj but vs = 0.
     return kIllegalInput;
   }
@@ -25,7 +25,7 @@ ErrorType StateTransformer::GetStateFromFrenetState(const FrenetState& fs,
   }
 
   decimal_t one_minus_curd = 1 - curvature * fs.vec_ds[0];
-  if (one_minus_curd < kEPS) {
+  if (one_minus_curd < kEPS) {  // 假设
     // ~ the violation is typically caused by lateral dependent trajectories
     // ~ with very small s (overshotting)
     return kWrongStatus;
